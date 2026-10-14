@@ -1,12 +1,13 @@
+# Arquivos de dados pesados e banco local
 cyclist.db
-trips/
-*.csv
 *.db
-cyclist.db
 trips/
+trips/*.csv
 *.csv
-*.db
-cyclist.db
-trips/
-*.csv
-*.db
+!resumo_*.csv
+
+# Ambiente virtual e cache Python
+.venv/
+__pycache__/
+*.pyc
+

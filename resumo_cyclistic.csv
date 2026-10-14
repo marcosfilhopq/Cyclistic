@@ -1,0 +1,15 @@
+member_casual,day_of_week,dia_nome,total_corridas,media_duracao_min
+casual,1,Domingo,334639,21.27
+casual,2,Segunda,248628,18.6
+casual,3,Terça,238405,16.09
+casual,4,Quarta,239449,15.28
+casual,5,Quinta,258842,15.91
+casual,6,Sexta,322562,18.07
+casual,7,Sábado,438505,20.85
+member,1,Domingo,411337,13.33
+member,2,Segunda,554230,11.94
+member,3,Terça,617803,11.8
+member,4,Quarta,618853,11.69
+member,5,Quinta,612019,11.74
+member,6,Sexta,565321,12.16
+member,7,Sábado,491176,13.48

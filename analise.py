@@ -1,4 +1,3 @@
-from numpy._core import arrayprint
 import duckdb
 import pandas as pd
 
@@ -29,73 +28,132 @@ con=duckdb.connect("cyclist.db") #con->conexao
 # total=con.execute("SELECT count(*) FROM trips_combined").fetchone()[0]
 # print(f"{total:,}".replace(",", "."))
 
-#Comando para criar a tabela
+# Cria a tabela processada com limpeza de dados (Fase Processar do Google)
+# - Remove viagens com duração negativa ou zero (erros de sistema)
+# - Remove viagens menores que 60 segundos (desbloqueios falsos ou docks quebrados)
+# - Remove viagens maiores que 24h (anomalias/esquecimentos)
+# - Converte a duração para minutos decimais (ride_length_min) para facilitar gráficos e médias
 con.execute(
     """
     CREATE OR REPLACE TABLE trips_processed AS
     SELECT
-        *, -- pegas as colnas originais
+        ride_id,
+        rideable_type,
+        started_at,
+        ended_at,
         ended_at - started_at AS ride_length,
-        dayofweek(started_at) + 1 AS day_of_week
+        date_part('epoch', ended_at - started_at) / 60.0 AS ride_length_min,
+        dayofweek(started_at) + 1 AS day_of_week,
+        CASE dayofweek(started_at)
+            WHEN 0 THEN 'Domingo'
+            WHEN 1 THEN 'Segunda'
+            WHEN 2 THEN 'Terça'
+            WHEN 3 THEN 'Quarta'
+            WHEN 4 THEN 'Quinta'
+            WHEN 5 THEN 'Sexta'
+            WHEN 6 THEN 'Sábado'
+        END AS dia_nome,
+        MONTH(started_at) AS mes,
+        CASE MONTH(started_at)
+            WHEN 1 THEN 'Jan' WHEN 2 THEN 'Fev' WHEN 3 THEN 'Mar' WHEN 4 THEN 'Abr'
+            WHEN 5 THEN 'Mai' WHEN 6 THEN 'Jun' WHEN 7 THEN 'Jul' WHEN 8 THEN 'Ago'
+            WHEN 9 THEN 'Set' WHEN 10 THEN 'Out' WHEN 11 THEN 'Nov' WHEN 12 THEN 'Dez'
+        END AS mes_nome,
+        start_station_name,
+        start_station_id,
+        end_station_name,
+        end_station_id,
+        start_lat,
+        start_lng,
+        end_lat,
+        end_lng,
+        member_casual
     FROM trips_combined
+    WHERE ended_at > started_at
+      AND date_part('epoch', ended_at - started_at) >= 60
+      AND date_part('epoch', ended_at - started_at) <= 86400
     """
 )
 
-#dataframe em si
-df_processada=con.execute("SELECT * FROM trips_processed LIMIT 10").df()
-print(df_processada)
-
-df_resumo=con.execute(
+# 1. KPIs Gerais
+df_kpis = con.execute(
     """
     SELECT 
-        AVG(ride_length) AS media_duracao,
-        MAX(ride_length) AS maxima_duracao,
-        MODE(day_of_week) AS dia_mais_frequente
+        member_casual,
+        COUNT(*) AS total_corridas,
+        ROUND(AVG(ride_length_min), 2) AS media_duracao_min,
+        ROUND(MEDIAN(ride_length_min), 2) AS mediana_duracao_min,
+        ROUND(MAX(ride_length_min), 2) AS max_duracao_min
     FROM trips_processed
+    GROUP BY member_casual
     """
 ).df()
-#print(df_resumo)
+print("\n=== KPIS GERAIS ===")
+print(df_kpis)
+df_kpis.to_csv("resumo_kpis.csv", index=False)
 
-#TABELAS DINAMICAS -> uso do GROUP BY
-df_pivot=con.execute(
+# 2. Corridas e Duração por Dia da Semana
+df_pivot = con.execute(
     """
     SELECT 
         member_casual,
         day_of_week,
+        dia_nome,
         COUNT(*) AS total_corridas,
-        AVG(ride_length) AS media_duracao
+        ROUND(AVG(ride_length_min), 2) AS media_duracao_min
     FROM trips_processed
-    GROUP BY member_casual, day_of_week
-    ORDER BY member_casual, day_of_week  --Organiza de 1 para 7
+    GROUP BY member_casual, day_of_week, dia_nome
+    ORDER BY member_casual, day_of_week
     """
 ).df()
+print("\n=== RESUMO POR DIA DA SEMANA ===")
 print(df_pivot)
-
-# Adicione a linha abaixo DENTRO do arquivo analise.py
+# Mantém o nome antigo para compatibilidade e salva também descritivo
 df_pivot.to_csv("resumo_cyclistic.csv", index=False)
+df_pivot.to_csv("resumo_dia_semana.csv", index=False)
 
-#Aumento(ou perda) de uso de bicleltas eletricas - grafico de serie
-df_pivot_2=con.execute(
+# 3. Tipos de Bicicleta
+df_pivot_2 = con.execute(
     """
     SELECT 
         member_casual,
         rideable_type,
-        MONTH(started_at) AS mes,
-        COUNT(*) AS total_corridas
+        COUNT(*) AS total_corridas,
+        ROUND(AVG(ride_length_min), 2) AS media_duracao_min
     FROM trips_processed
-    GROUP BY member_casual, rideable_type, MONTH(started_at)
-    ORDER BY mes ASC, member_casual, rideable_type
+    GROUP BY member_casual, rideable_type
+    ORDER BY member_casual, total_corridas DESC
     """
 ).df()
+print("\n=== RESUMO POR TIPO DE BICICLETA ===")
 print(df_pivot_2)
+df_pivot_2.to_csv("resumo_tipos_bike.csv", index=False)
 
-#Estacoes que os usarios mais pegam - com latitude e longitude
+# 4. Sazonalidade Mensal
+df_meses = con.execute(
+    """
+    SELECT
+        member_casual,
+        mes,
+        mes_nome,
+        COUNT(*) AS total_corridas,
+        ROUND(AVG(ride_length_min), 2) AS media_duracao_min
+    FROM trips_processed
+    GROUP BY member_casual, mes, mes_nome
+    ORDER BY member_casual, mes
+    """
+).df()
+print("\n=== RESUMO MENSAL ===")
+print(df_meses)
+df_meses.to_csv("resumo_meses.csv", index=False)
+
+# 5. Top 10 Estações mais populares entre usuários casuais
 df_estacoes_casuais = con.execute(
     """
     SELECT 
         start_station_name,
-        AVG(start_lat) AS lat,	--Como erra por alguns metros, pegar a media pegar o valor 'central'
-        AVG(start_lng) AS lng,		
+        ROUND(AVG(start_lat), 4) AS lat,
+        ROUND(AVG(start_lng), 4) AS lng,
         COUNT(*) AS total_saidas
     FROM trips_processed
     WHERE member_casual = 'casual' AND start_station_name IS NOT NULL
@@ -104,18 +162,8 @@ df_estacoes_casuais = con.execute(
     LIMIT 10
     """
 ).df()
+print("\n=== TOP 10 ESTAÇÕES (CASUAIS) ===")
 print(df_estacoes_casuais)
+df_estacoes_casuais.to_csv("resumo_top_estacoes.csv", index=False)
 
-#Quais meses eles usam mais 
-df_meses=con.execute(
-    """
-    SELECT
-        member_casual,
-        MONTH(started_at) AS mes,
-        COUNT(*) AS total_corridas
-    FROM trips_processed
-    GROUP BY member_casual, MONTH(started_at)
-    ORDER BY member_casual, mes
-    """
-).df()
-print(df_meses)
+print("\n[OK] Análises concluídas e arquivos CSV exportados com sucesso!")
